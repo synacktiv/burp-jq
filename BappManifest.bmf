@@ -1,0 +1,12 @@
+Uuid: 58b70b5b8deeaece78e52e8dc3d2fd8c
+ExtensionType: 1
+Name: JQ
+RepoName: burp-jq
+ScreenVersion: 1.0
+SerialVersion: 1
+MinPlatformVersion: 0
+ProOnly: False
+Author: Synacktiv - Matthieu Barjole
+ShortDescription: Filter JSON on the fly with JQ queries in the HTTP message viewer.
+EntryPoint: build/libs/burp-jq-all.jar
+BuildCommand: gradle fatJar
