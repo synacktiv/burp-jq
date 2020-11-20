@@ -2,8 +2,8 @@ Uuid: c0d90a42c99848588d3df017cca717b5
 ExtensionType: 1
 Name: JQ
 RepoName: jq
-ScreenVersion: 1.0
-SerialVersion: 1
+ScreenVersion: 1.1
+SerialVersion: 2
 MinPlatformVersion: 0
 ProOnly: False
 Author: Synacktiv
