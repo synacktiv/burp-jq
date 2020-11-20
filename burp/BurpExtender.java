@@ -23,6 +23,7 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.text.DefaultCaret;
+import javax.swing.SwingUtilities;
 
 // https://github.com/eiiches/jackson-jq
 // https://github.com/FasterXML
@@ -43,9 +44,13 @@ public class BurpExtender implements IBurpExtender, IMessageEditorTabFactory {
 
     private IBurpExtenderCallbacks callbacks;
     private IExtensionHelpers helpers;
+    private static final Color colorError = new Color(247, 66, 62);
     private static final Color colorOK = new Color(81, 179, 100);
     private static final Color colorWarning = new Color(252, 151, 78);
-    private static final Color colorError = new Color(247, 66, 62);
+    private static final ObjectMapper mapper = new ObjectMapper();
+    private static final Scope scope = Scope.newEmptyScope();
+    private static final String COMMIT_ACTION = "commit";
+    private static final Version jqVersion = Versions.JQ_1_6;
 
     @Override
     public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
@@ -53,26 +58,36 @@ public class BurpExtender implements IBurpExtender, IMessageEditorTabFactory {
         this.callbacks = callbacks;
         helpers = callbacks.getHelpers();
         callbacks.setExtensionName("JQ");
-        callbacks.registerMessageEditorTabFactory(this);
+
+        // UI
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                callbacks.registerMessageEditorTabFactory(BurpExtender.this);
+            }
+        });
+
+        // Jackson JQ
+        DefaultPrettyPrinter prettyPrinter = new DefaultPrettyPrinter();
+        prettyPrinter.indentArraysWith(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE);
+        mapper.setDefaultPrettyPrinter(prettyPrinter);
+        mapper.configure(SerializationFeature.INDENT_OUTPUT, true);
+        BuiltinFunctionLoader.getInstance().loadFunctions(jqVersion, scope);
     }
 
     class JQTab implements IMessageEditorTab {
 
-        private final JqComplete jqComplete;
-        private final ITextEditor outputArea;
-        private final JCheckBox checkBoxFilterOutNulls;
-        private final JCheckBox checkBoxKeys;
-        private final JCheckBox checkBoxPretty;
-        private final JCheckBox checkBoxRaw;
-        private final JCheckBox checkBoxSort;
-        private final JCheckBox checkBoxUnique;
-        private final JPanel container;
-        private final JTextField filtersBar;
-        private final ObjectMapper mapper;
-        private final Scope scope;
-        private final Version jqVersion = Versions.JQ_1_6;
+        private ITextEditor outputArea;
+        private JCheckBox checkBoxFilterOutNulls;
+        private JCheckBox checkBoxKeys;
+        private JCheckBox checkBoxPretty;
+        private JCheckBox checkBoxRaw;
+        private JCheckBox checkBoxSort;
+        private JCheckBox checkBoxUnique;
+        private JPanel container = new JPanel(new BorderLayout());
+        private JqComplete jqComplete;
         private JsonNode input;
-        private static final String COMMIT_ACTION = "commit";
+        private JTextField filtersBar;
         
         public JQTab(IMessageEditorController controller, boolean editable) {
             /*
@@ -84,97 +99,91 @@ public class BurpExtender implements IBurpExtender, IMessageEditorTabFactory {
              *      |     JTextField filtersBar
              *      |     JPanel filtersHelpers
              *      |       FlowLayout LEFT
-             *      |         Checkbox checkBoxPretty
-             *      |         Checkbox checkBoxRaw
-             *      |         Checkbox checkBoxSort
-             *      |         Checkbox checkBoxUnique
-             *      |         Checkbox checkBoxFilterOutNulls
-             *      |         Checkbox checkBoxKeys
+             *      |         JCheckBox checkBoxPretty
+             *      |         JCheckBox checkBoxRaw
+             *      |         JCheckBox checkBoxSort
+             *      |         JCheckBox checkBoxUnique
+             *      |         JCheckBox checkBoxFilterOutNulls
+             *      |         JCheckBox checkBoxKeys
              *      CENTER
              *        ITextEditor outputArea
              */
 
-            // Main container
-            container = new JPanel(new BorderLayout());
-
-            // Filters container
-            JPanel filters = new JPanel();
-            filters.setLayout(new BoxLayout(filters, BoxLayout.Y_AXIS));
-
-            // Filters bar
-            filtersBar = new JTextField();
-            filtersBar.setBackground(colorWarning);
-            filtersBar.setFont(new Font("monospaced", Font.BOLD, 13));
-            filtersBar.setForeground(Color.WHITE);
-            Action action = new AbstractAction() {
+            SwingUtilities.invokeLater(new Runnable() {
                 @Override
-                public void actionPerformed(ActionEvent e) {
-                    applyFilters();
+                public void run() {
+
+                    // Filters container
+                    JPanel filters = new JPanel();
+                    filters.setLayout(new BoxLayout(filters, BoxLayout.Y_AXIS));
+
+                    // Filters bar
+                    filtersBar = new JTextField();
+                    filtersBar.setBackground(colorWarning);
+                    filtersBar.setFont(new Font("monospaced", Font.BOLD, 13));
+                    filtersBar.setForeground(Color.WHITE);
+                    Action action = new AbstractAction() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            applyFilters();
+                        }
+                    };
+                    filtersBar.addActionListener(action);
+                    filtersBar.setFocusTraversalKeysEnabled(false);
+
+                    // Completion
+                    jqComplete = new JqComplete(filtersBar);
+                    filtersBar.getDocument().addDocumentListener(jqComplete);
+                    filtersBar.getInputMap().put(KeyStroke.getKeyStroke("TAB"), COMMIT_ACTION);
+                    filtersBar.getActionMap().put(COMMIT_ACTION, jqComplete.new CommitAction());
+
+                    // Filters helpers
+                    JPanel filtersHelpers = new JPanel(new FlowLayout(FlowLayout.LEFT));
+                    ItemListener helperListener = new ItemListener() {
+                        public void itemStateChanged(ItemEvent e) {
+                            applyFilters();
+                        }
+                    };
+                    checkBoxPretty = new JCheckBox("Pretty", true);
+                    checkBoxPretty.setToolTipText("Prettify output");
+                    checkBoxPretty.addItemListener(helperListener);
+                    checkBoxRaw = new JCheckBox("Raw", true);
+                    checkBoxRaw.setToolTipText("Trim quotes and render special chars for strings output");
+                    checkBoxRaw.addItemListener(helperListener);
+                    checkBoxSort = new JCheckBox("Sort");
+                    checkBoxSort.setToolTipText("[ <filters> ] | sort | .[]");
+                    checkBoxSort.addItemListener(helperListener);
+                    checkBoxUnique = new JCheckBox("Unique");
+                    checkBoxUnique.setToolTipText("[ <filters> ] | unique | .[]");
+                    checkBoxUnique.addItemListener(helperListener);
+                    checkBoxFilterOutNulls = new JCheckBox("Filter out nulls");
+                    checkBoxFilterOutNulls.setToolTipText("<filters> | select(. != null)");
+                    checkBoxFilterOutNulls.addItemListener(helperListener);
+                    checkBoxKeys = new JCheckBox("Keys");
+                    checkBoxKeys.setToolTipText("<filters> | keys");
+                    checkBoxKeys.addItemListener(helperListener);
+
+                    // Assemble filters helpers
+                    filtersHelpers.add(checkBoxPretty);
+                    filtersHelpers.add(checkBoxRaw);
+                    filtersHelpers.add(checkBoxSort);
+                    filtersHelpers.add(checkBoxUnique);
+                    filtersHelpers.add(checkBoxFilterOutNulls);
+                    filtersHelpers.add(checkBoxKeys);
+
+                    // Assemble filters container
+                    filters.add(filtersBar);
+                    filters.add(filtersHelpers);
+
+                    // Output area
+                    outputArea = callbacks.createTextEditor();
+                    outputArea.setEditable(false);
+
+                    // Assemble main container
+                    container.add(filters, BorderLayout.NORTH);
+                    container.add(outputArea.getComponent(), BorderLayout.CENTER);
                 }
-            };
-            filtersBar.addActionListener(action);
-            filtersBar.setFocusTraversalKeysEnabled(false);
-
-            // Completion
-            jqComplete = new JqComplete(filtersBar);
-            filtersBar.getDocument().addDocumentListener(jqComplete);
-            filtersBar.getInputMap().put(KeyStroke.getKeyStroke("TAB"), COMMIT_ACTION);
-            filtersBar.getActionMap().put(COMMIT_ACTION, jqComplete.new CommitAction());
-
-            // Filters helpers
-            JPanel filtersHelpers = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            ItemListener helperListener = new ItemListener() {
-                public void itemStateChanged(ItemEvent e) {
-                    applyFilters();
-                }
-            };
-            checkBoxPretty = new JCheckBox("Pretty", true);
-            checkBoxPretty.setToolTipText("Prettify output");
-            checkBoxPretty.addItemListener(helperListener);
-            checkBoxRaw = new JCheckBox("Raw", true);
-            checkBoxRaw.setToolTipText("Trim quotes and render special chars for strings output");
-            checkBoxRaw.addItemListener(helperListener);
-            checkBoxSort = new JCheckBox("Sort");
-            checkBoxSort.setToolTipText("[ <filters> ] | sort | .[]");
-            checkBoxSort.addItemListener(helperListener);
-            checkBoxUnique = new JCheckBox("Unique");
-            checkBoxUnique.setToolTipText("[ <filters> ] | unique | .[]");
-            checkBoxUnique.addItemListener(helperListener);
-            checkBoxFilterOutNulls = new JCheckBox("Filter out nulls");
-            checkBoxFilterOutNulls.setToolTipText("<filters> | select(. != null)");
-            checkBoxFilterOutNulls.addItemListener(helperListener);
-            checkBoxKeys = new JCheckBox("Keys");
-            checkBoxKeys.setToolTipText("<filters> | keys");
-            checkBoxKeys.addItemListener(helperListener);
-
-            // Assemble filters helpers
-            filtersHelpers.add(checkBoxPretty);
-            filtersHelpers.add(checkBoxRaw);
-            filtersHelpers.add(checkBoxSort);
-            filtersHelpers.add(checkBoxUnique);
-            filtersHelpers.add(checkBoxFilterOutNulls);
-            filtersHelpers.add(checkBoxKeys);
-
-            // Assemble filters container
-            filters.add(filtersBar);
-            filters.add(filtersHelpers);
-
-            // Output area
-            outputArea = callbacks.createTextEditor();
-            outputArea.setEditable(false);
-
-            // Assemble main container
-            container.add(filters, BorderLayout.NORTH);
-            container.add(outputArea.getComponent(), BorderLayout.CENTER);
-
-            // Jackson JQ
-            mapper = new ObjectMapper();
-            DefaultPrettyPrinter prettyPrinter = new DefaultPrettyPrinter();
-            prettyPrinter.indentArraysWith(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE);
-            mapper.setDefaultPrettyPrinter(prettyPrinter);
-            mapper.configure(SerializationFeature.INDENT_OUTPUT, true);
-            scope = Scope.newEmptyScope();
-            BuiltinFunctionLoader.getInstance().loadFunctions(jqVersion, scope);
+            });
         }
 
         @Override
@@ -274,8 +283,8 @@ public class BurpExtender implements IBurpExtender, IMessageEditorTabFactory {
         public void applyFilters() {
 
             // Helpers
-            String filters = filtersBar.getText();
-            if (filters.trim().equals(""))
+            String filters = filtersBar.getText().trim();
+            if (filters.equals(""))
                 filters = ".";
             if (checkBoxKeys.isSelected())
                 filters += "|keys";
